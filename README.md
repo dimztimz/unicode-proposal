@@ -24,6 +24,11 @@ The functions will fall in four categories:
 4. **Functions that take input in chunks and write in chunks.**
    They keep a state between calls. Examples are [ucnv_fromUnicode] and
    [ucnv_toUnicode]. `std::codecvt` is also such API, but it is hard to use.
+   The problem with `codecvt` comes from the return value `partial`. If that is
+   returned, one has to do additional complicated checks to see if the input
+   has incomplete sequence at the end of the chunk or the output chunk has no
+   more space. Additionally, `codevt` may or may not save the few incomplete
+   input bytes at the end into the state, the standard makes no guarantees.
    
 [utf8.h]: https://unicode-org.github.io/icu-docs/apidoc/released/icu4c/utf8_8h.html
 [utf16.h]: https://unicode-org.github.io/icu-docs/apidoc/released/icu4c/utf16_8h.html
