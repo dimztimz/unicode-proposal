@@ -61,182 +61,213 @@ Almost all operations come in two flavors, one that can accept invalid
 sequences and another that must have valid sequences. We will consider these
 flavors as separate operations.
 
-For each operation there should be at least 3 functions (or function templates).
+For each operation there should be at least 2 functions (or function templates).
 
-1. One that takes a range and index and returns new index.
-   1. One alternative to this is function that returns the size of decoded code point instead of updated index.
-   2. Another alternative is function that returns both the size of the code point and the updated index.
+1. One that takes a string (or more generally, a range) and index and returns
+   new index.
 2. One that takes pair of iterators and returns updated iterator.
-3. One that takes a range and returns range or iterator.
 
-Let the bikeshedding begin. I will now show some of the possible function
-signatures for decoding one code point from UTF-8 string and encoding it to
-UTF-8.
+I will now show few examples how such functions can be defined and implemented
+using ICU.
 
 ```cpp
-#include <ranges>
 #include <string>
 #include <string_view>
 #include <tuple>
+#include <unicode/utf8.h>
 
 using namespace std;
 
-// In the bellow functions consider Str and Size as template type parameters
+// In the bellow functions consider Str, Index, Iter as template type parameters
 using Str = string;
 using Index = Str::size_type;
 struct Err {};
 
 /* ========================= RANGE + INDEX ========================= */
-// This function has no out parameters, it returns tuple of
-// (next index - one past the decoded CP, the CP, and possible error value).
-// Precondition: s[i] must be valid, i.e. 0 <= i < size(s).
-auto u8_next(const Str& s, Index i) -> tuple<Index, char32_t, Err>;
+struct code_point_and_error {
+	int32_t a;
 
-// Similar to the above but error is signaled by special value of the returned
-// CP. Unicode code point needs 21 bits and char32_t has 32 so there enough
-// space to signal all possible types of errors.
-auto u8_next2(const Str& s, Index i)
-    -> tuple<Index, char32_t>; // error is above 0x0010FFFF
-auto u8_next3(const Str& s, Index i)
-    -> tuple<Index, int32_t>; // use negative int for error as in ICU
+	// if error() == true, cp() will be unspecified value outside
+	// of the Unicode range, i.e. cp() > 0x0010FFFF.
+	char32_t cp() const { return a; }
+	bool error() const { return a < 0; }
+};
+// TODO: maybe make this structure to look like std::optional or std::expected.
+// We don't use them because it forces additional bool. ICU uses negative int
+// to signal error in U8_NEXT.
 
-// Question: Should we use struct instead of tuple? I prefer struct.
-// For brevity I will write tuple here.
+auto u8_next1(const Str& s, Index& i) -> code_point_and_error
+{
+	code_point_and_error cpe;
+	auto sz = size(s);
+	U8_NEXT(s, i, sz, cpe.a);
+	return cpe;
+}
 
-// These functions do not return, instead they use out parameters. The index is
-// updated in place, it is in-out parameter.
-void u8_next3(const Str& s, /*inout*/ Index& i, /*out*/ char32_t& CP,
-              /*out*/ Err& e);
-void u8_next4(const Str& s, /*inout*/ Index& i,
-              /*out*/ char32_t& CP); // Error part of CP
+auto u8_next2(const Str& s, Index i) -> std::pair<Index, code_point_and_error>
+{
+	auto cpe = u8_next1(s, i);
+	return {i, cpe};
+}
 
-// Maybe use mixture of return value and out parameters?
-auto u8_next5(const Str& s, /*inout*/ Index& i) -> char32_t;
-auto u8_next6(const Str& s, Index i, /*out*/ char32_t& CP) -> Index;
+// usage
 
-/* ======================RANGE + INDEX ALTERNATIVES ===================== */
+void u8_next_usage(Str& s)
+{
+	// u8_next1, index is inout parameter
+	for (size_t i = 0; i != size(s);) {
+		auto cp = u8_next1(s, i);
+		// process cp
+	}
+	for (size_t i = 0; i != size(s);) {
+		auto j = i;
+		auto cp = u8_next1(s, j);
+		auto cp_size = j - i;
+		// process cp
+		i = j;
+	}
+	for (size_t j = 0; j != size(s);) {
+		auto i = j;
+		auto cp = u8_next1(s, j);
+		auto cp_size = j - i;
+		// process cp
+	}
+	for (size_t i = 0, j = 0; i != size(s); i = j) {
+		auto cp = u8_next1(s, j);
+		auto cp_size = j - i;
+		// process cp
+	}
 
-// return the size of the CP as uint8_t because it is value between 1 and 4
-using CPSize = uint8_t;
+	// u8_next2, index in return value
+	for (size_t i = 0; i != size(s);) {
+		code_point_and_error cpe;
+		std::tie(i, cpe) = u8_next2(s, i);
+		// process cp
+	}
+	for (size_t i = 0; i != size(s);) {
+		auto [j, cp] = u8_next2(s, i);
+		auto cp_size = j - i;
+		// process cp
+		i = j;
+	}
+	for (size_t i = 0, j = 0; i != size(s); i = j) {
+		auto [jj, cp] = u8_next2(s, i);
+		j = jj;
+		auto cp_size = j - i;
+		// process cp
+	}
+	for (size_t i = 0, j = 0; i != size(s); i = j) {
+		code_point_and_error cpe;
+		std::tie(j, cpe) = u8_next2(s, i);
+		auto cp_size = j - i;
+		// process cp
+	}
+}
 
-auto u8_next7(const Str& s, Index i) -> tuple<char32_t, CPSize>;
-
-// return both the updated index and the size of the CP
-auto u8_next8(const Str& s, Index i) -> tuple<Index, char32_t, uint8_t>;
+auto valid_u8_next1(const Str& s, Index& i) -> char32_t
+{
+	char32_t c;
+	U8_NEXT_UNSAFE(s, i, c);
+	return c;
+}
+auto valid_u8_next2(const Str& s, Index i) -> std::pair<Index, char32_t>
+{
+	auto c = valid_u8_next1(s, i);
+	return {i, c};
+}
+// valid_u8_next() should work with random access iterators too,
+// or anything that is indexable. It does not need information about size.
 
 /* ========================= PAIR OF ITERATORS ========================= */
 using Iter = Str::const_iterator;
 
-auto u8_next(Iter first, Iter last) -> tuple<Iter, char32_t, Err>;
-auto u8_next2(Iter first, Iter last)
-    -> tuple<Iter, char32_t>; // Error part of CP, above 0x0010FFFF
-auto u8_next3(Iter first, Iter last)
-    -> tuple<Iter, int32_t>; // Error part of CP, negative number
+auto u8_next_it1(Iter& first, Iter last) -> code_point_and_error
+{
+	auto i = Iter::difference_type();
+	auto sz = distance(first, last);
+	code_point_and_error cpe;
+	U8_NEXT(first, i, sz, cpe.a);
+	advance(first, i);
+	return cpe;
+}
 
-auto u8_next4(Iter first, Iter last)
-    -> tuple<Iter, char32_t, CPSize>; // Maybe return CP size here too?
+auto u8_next_it2(Iter first, Iter last) -> std::pair<Iter, code_point_and_error>
+{
+	auto i = Iter::difference_type();
+	auto sz = distance(first, last);
+	code_point_and_error cpe;
+	U8_NEXT(first, i, sz, cpe.a);
+	return {first + i, cpe};
+}
 
-// Mixed out-parameters and return value.
-auto u8_next5(Iter first, Iter last, /*out*/ char32_t& CP) -> Iter;
-auto u8_next6(/*inout*/ Iter& first, Iter last) -> char32_t;
-
-// All out-parameters.
-void u8_next7(/*inout*/ Iter& first, Iter last, /*out*/ char32_t& CP);
-
-/* ========================= RANGES ========================= */
-auto u8_next(const Str& s)
-    -> tuple<ranges::borrowed_iterator_t<Str>, char32_t, Err>;
-auto u8_next2(const Str& s)
-    -> tuple<ranges::borrowed_iterator_t<Str>, char32_t>; // Error part of CP
-
-// Mixed out-parameters and return value.
-template <class Range>
-auto u8_next3(/*inout*/ Range& rng) -> char32_t; // modifies rng.begin()
-// Some of the concepts machinery should be applied here, e.g. borrowed_range.
-
-// All out-parameters.
-template <class Range>
-void u8_next4(/*inout*/ Range& rng, /*out*/ char32_t& CP);
-
-/* ====================== DECODING VALID UTF-8 ====================== */
-// These functions receive only valid UTF-8 sequences. Therefore they do not
-// need to know the size of the whole range and should be able to receive range
-// or iterator. Obviously, there is no need to signal error.
-
-using RangeOrIter = Str::const_iterator;
-using Index2 = RangeOrIter::difference_type;
-
-// The variant with range + index now can be iterator + index.
-auto valid_u8_next(const RangeOrIter& rng, Index2 i) -> tuple<Index2, char32_t>;
-
-// The variant with pair of iterators now is single iterator.
-auto valid_u8_next(Iter it) -> tuple<Iter, char32_t>;
-auto valid_u8_next(Iter it, /*out*/ char32_t& CP) -> Iter;
-auto valid_u8_next(/*inout*/ Iter& it) -> char32_t;
+auto valid_u8_next_it(Iter first) -> std::pair<Iter, char32_t>
+{
+	auto i = Iter::difference_type();
+	char32_t c;
+	U8_NEXT_UNSAFE(first, i, c);
+	return {first + i, c};
+}
 
 /* ====================== ENCODING TO UTF-8 ====================== */
 
-auto encode_u8(char32_t CP, Iter out)
-    -> Iter; // writes to out, can not check for space
-auto encode_u8(char32_t CP, Iter out, Iter last)
-    -> Iter; // writes to out, can check for space
-
-auto encode_u8(char32_t CP, Str& s, Index i)
-    -> Index; // starts writing at s[i]. Checks for space;
-```
-
-Looking at the above functions, I can extract three questions:
-
-1. How should the error be reported? Possible answers:
-   - Via separate type
-   - As high value in the CP with unsigned type `char32_t`
-   - As negative value in the CP with signed type `int32_t`.
-2. Should the size of the encoded sequence of the code point be returned?
-   Answers are yes or no.
-3. Should we use return values or out-parameters or some mix between them? There
-   are multiple answers here.
-
-The example functions above are the subset of the Cartesian product of the
-answers of the questions. The goal now is to choose only one answer for each
-question.
-
-
-Here, I would like to introduce a small abstraction, the idea of struct that
-keeps one code point, but encoded in code units. Then, some algorithms
-are much simpler to implement and are more efficient. See the code:
-
-```cpp
-#include <string_view>
-
-using namespace std;
-
-struct encoded_cp_u8 {
-	char cp[4]; // Must be efficient at ABI level. Whole struct must be
-	            // passed via registers.
-
-	auto data() const -> const char* { return cp; }
-	auto size() const -> size_t; // Calculate size from first byte.
-
-	operator string_view() const { return {data(), size()}; }
-};
-
-struct encoded_cp_u16 {
-	char16_t cp[2];
-
-	auto data() const -> const char16_t* { return cp; }
-	auto size() const -> size_t; // Calculate size from first code unit.
-
-	operator u16string_view() const { return {data(), size()}; }
-};
-
-auto encode_u8(char32_t CP) -> encoded_cp_u8;
-
-auto find_code_point(string& s, char32_t cp) -> size_t
+// starts writing at s[i]. Checks for space except for the first element s[i],
+// i < size(s) is precondition.
+auto encode_u8(char32_t CP, Str& s, Index i) -> std::pair<Index, bool>
 {
-	auto ecp = encode_u8(cp);
-	return s.find(ecp);
+	auto sz = size(s);
+	auto err = false;
+	U8_APPEND(s, i, sz, CP, err);
+	return {i, !err};
+}
+
+using OutIt = Str::iterator;
+
+// Writes to out, can check for space except for the first element i.e.
+// out < last is precondition.
+auto encode_u8(char32_t CP, OutIt out, OutIt last) -> std::pair<OutIt, bool>
+{
+	auto i = OutIt::difference_type();
+	auto sz = distance(out, last);
+	auto err = false;
+	U8_APPEND(out, i, sz, CP, err);
+	return {out + i, !err};
+}
+
+// writes to out, can not check for space
+auto encode_u8(char32_t CP, OutIt out) -> std::pair<OutIt, bool>
+{
+	auto i = OutIt::difference_type();
+	auto sz = i + 4;
+	auto err = false;
+	U8_APPEND(out, i, sz, CP, err);
+	return {out + i, !err};
+}
+
+auto encode_valid_cp_u8(char32_t CP, Str& s, Index i) -> Index
+{
+	U8_APPEND_UNSAFE(s, i, CP);
+	return i;
+}
+
+auto encode_valid_cp_u8(char32_t CP, OutIt out) -> OutIt
+{
+	auto i = OutIt::difference_type();
+	U8_APPEND_UNSAFE(out, i, CP);
+	return out + i;
 }
 ```
 
-So far this is enough. I would like to get some feedback. I'm interested which
-function signatures are better.
+Looking at the above functions, I can ask few questions:
+
+1. How should the error be reported? The type `code_point_and_error` needs
+   some polishing. At first, I was thinking between using separate error code
+   with its own type, using negative int (as ICU) or using high value with type
+   `char32_t`. But then I got the idea to provide lightweight wrapper type
+   `code_point_and_error` that resembles `std::optional/std::expected` and
+   let the implementation choose which error signaling it would use.
+2. Should the size of the encoded sequence of the code point be returned?
+   Probably no. In the examples above I just subtract indexes to get that
+   information.
+3. Should we use return values or out-parameters? For the code point and error
+   definitely use return value, but for the index or iterator both APIs make
+   sense. Those parameters are actually inout not just out.
