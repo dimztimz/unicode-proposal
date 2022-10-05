@@ -296,6 +296,27 @@ void u8_next_usage(Str& s)
 		// process cp
 	}
 }
+
+auto find_cp_faster(const string& s, char32_t cp) -> size_t
+{
+	auto ecp = encoded_cp_u8_or_error(cp);
+	if (ecp.error())
+		return s.npos;
+	return s.find(ecp);
+}
+
+auto find_cp_slower(const string& s, char32_t cp) -> size_t
+{
+	for (size_t i = 0, j = 0; i != size(s); i = j) {
+		auto [jj, dec_cp] = u8_next_i(s, i);
+		j = jj;
+		if (dec_cp.error())
+			continue;
+		else if (dec_cp.cp() == cp)
+			return i;
+	}
+	return s.npos;
+}
 ```
 
 Looking at the above functions, I can ask few questions:
