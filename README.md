@@ -84,7 +84,7 @@ using Index = Str::size_type;
 using Iter = Str::const_iterator;
 using OutIt = Str::iterator;
 
-struct code_point_and_error {
+struct code_point_or_error {
 	int32_t a;
 
 	// if error() == true, cp() will be unspecified value outside
@@ -97,28 +97,28 @@ struct code_point_and_error {
 // to signal error in U8_NEXT.
 
 /* =========== OPERATION: U8_NEXT =============== */
-auto u8_advance_i(const Str& s, Index& i) -> code_point_and_error
+auto u8_advance_i(const Str& s, Index& i) -> code_point_or_error
 {
-	code_point_and_error cpe;
+	code_point_or_error cpe;
 	auto sz = size(s);
 	U8_NEXT(s, i, sz, cpe.a);
 	return cpe;
 }
-auto u8_next_i(const Str& s, Index i) -> std::pair<Index, code_point_and_error>
+auto u8_next_i(const Str& s, Index i) -> std::pair<Index, code_point_or_error>
 {
 	auto cpe = u8_advance_i(s, i);
 	return {i, cpe};
 }
-auto u8_advance_it(Iter& first, Iter last) -> code_point_and_error
+auto u8_advance_it(Iter& first, Iter last) -> code_point_or_error
 {
 	auto i = Iter::difference_type();
 	auto sz = distance(first, last);
-	code_point_and_error cpe;
+	code_point_or_error cpe;
 	U8_NEXT(first, i, sz, cpe.a);
 	advance(first, i);
 	return cpe;
 }
-auto u8_next_it(Iter first, Iter last) -> std::pair<Iter, code_point_and_error>
+auto u8_next_it(Iter first, Iter last) -> std::pair<Iter, code_point_or_error>
 {
 	auto cpe = u8_advance_it(first, last);
 	return {first, cpe};
@@ -178,14 +178,37 @@ auto encode_u8(char32_t CP, OutIt out, OutIt last) -> std::pair<OutIt, bool>
 }
 
 // writes to out, can not check for space
+template <class OutIt>
 auto encode_u8(char32_t CP, OutIt out) -> std::pair<OutIt, bool>
 {
-	auto i = OutIt::difference_type();
+	auto i = typename iterator_traits<OutIt>::difference_type();
 	auto sz = i + 4;
 	auto err = false;
 	U8_APPEND(out, i, sz, CP, err);
 	return {out + i, !err};
 }
+
+class encoded_cp_u8_or_error {
+	char a[4];
+
+      public:
+	encoded_cp_u8_or_error(char32_t cp = 0)
+	{
+		auto [it, ok] = encode_u8(cp, a);
+		std::fill(it, end(a), '\0');
+		if (!ok)
+			a[0] = 0xFF;
+	}
+
+	auto error() const -> bool { return a[0] & 0xFF == 0xFF; }
+	auto size() const -> size_t
+	{
+		int i = 0;
+		U8_FWD_1(a, i, 4);
+		return i;
+	}
+	operator string_view() const { return {a, size()}; }
+};
 
 /* =========== OPERATION: U8_APPEND_UNSAFE =============== */
 auto encode_valid_cp_u8(char32_t CP, Str& s, Index i) -> Index
@@ -194,12 +217,32 @@ auto encode_valid_cp_u8(char32_t CP, Str& s, Index i) -> Index
 	return i;
 }
 
+template <class OutIt>
 auto encode_valid_cp_u8(char32_t CP, OutIt out) -> OutIt
 {
-	auto i = OutIt::difference_type();
+	auto i = typename iterator_traits<OutIt>::difference_type();
 	U8_APPEND_UNSAFE(out, i, CP);
 	return out + i;
 }
+
+class encoded_valid_cp_u8 {
+	char a[4];
+
+      public:
+	encoded_valid_cp_u8(char32_t cp = 0)
+	{
+		auto it = encode_valid_cp_u8(cp, a);
+		std::fill(it, end(a), '\0');
+	}
+
+	auto size() const -> size_t
+	{
+		int i = 0;
+		U8_FWD_1_UNSAFE(a, i);
+		return i;
+	}
+	operator string_view() const { return {a, size()}; }
+};
 
 /* =========== USAGE EXAMPLES =============== */
 void u8_next_usage(Str& s)
@@ -230,7 +273,7 @@ void u8_next_usage(Str& s)
 
 	// u8_next_i, index in return value
 	for (size_t i = 0; i != size(s);) {
-		code_point_and_error cpe;
+		code_point_or_error cpe;
 		std::tie(i, cpe) = u8_next_i(s, i);
 		// process cp
 	}
@@ -247,7 +290,7 @@ void u8_next_usage(Str& s)
 		// process cp
 	}
 	for (size_t i = 0, j = 0; i != size(s); i = j) {
-		code_point_and_error cpe;
+		code_point_or_error cpe;
 		std::tie(j, cpe) = u8_next_i(s, i);
 		auto cp_size = j - i;
 		// process cp
@@ -257,11 +300,11 @@ void u8_next_usage(Str& s)
 
 Looking at the above functions, I can ask few questions:
 
-1. How should the error be reported? The type `code_point_and_error` needs
+1. How should the error be reported? The type `code_point_or_error` needs
    some polishing. At first, I was thinking between using separate error code
    with its own type, using negative int (as ICU) or using high value with type
    `char32_t`. But then I got the idea to provide lightweight wrapper type
-   `code_point_and_error` that resembles `std::optional/std::expected` and
+   `code_point_or_error` that resembles `std::optional/std::expected` and
    let the implementation choose which error signaling it would use.
 2. Should the size of the encoded sequence of the code point be returned?
    Probably no. In the examples above I just subtract indexes to get that
