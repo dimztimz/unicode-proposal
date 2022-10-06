@@ -11,41 +11,32 @@ using Index = Str::size_type;
 using Iter = Str::const_iterator;
 using OutIt = Str::iterator;
 
-struct code_point_or_error {
-	int32_t a;
-
-	// if error() == true, cp() will be unspecified value outside
-	// of the Unicode range, i.e. cp() > 0x0010FFFF.
-	char32_t cp() const { return a; }
-	bool error() const { return a < 0; }
-};
-// TODO: maybe make this structure to look like std::optional or std::expected.
-// We don't use them because it forces additional bool. ICU uses negative int
-// to signal error in U8_NEXT.
-
 /* =========== OPERATION: U8_NEXT =============== */
-auto u8_advance_i(const Str& s, Index& i) -> code_point_or_error
+
+constexpr char32_t cp_error = -1;
+
+auto u8_advance_i(const Str& s, Index& i) -> char32_t
 {
-	code_point_or_error cpe;
+	char32_t cp;
 	auto sz = size(s);
-	U8_NEXT(s, i, sz, cpe.a);
-	return cpe;
+	U8_NEXT(s, i, sz, cp);
+	return cp;
 }
-auto u8_next_i(const Str& s, Index i) -> std::pair<Index, code_point_or_error>
+auto u8_next_i(const Str& s, Index i) -> std::pair<Index, char32_t>
 {
-	auto cpe = u8_advance_i(s, i);
-	return {i, cpe};
+	auto cp = u8_advance_i(s, i);
+	return {i, cp};
 }
-auto u8_advance_it(Iter& first, Iter last) -> code_point_or_error
+auto u8_advance_it(Iter& first, Iter last) -> char32_t
 {
 	auto i = Iter::difference_type();
 	auto sz = distance(first, last);
-	code_point_or_error cpe;
-	U8_NEXT(first, i, sz, cpe.a);
+	char32_t cp;
+	U8_NEXT(first, i, sz, cp);
 	advance(first, i);
-	return cpe;
+	return cp;
 }
-auto u8_next_it(Iter first, Iter last) -> std::pair<Iter, code_point_or_error>
+auto u8_next_it(Iter first, Iter last) -> std::pair<Iter, char32_t>
 {
 	auto cpe = u8_advance_it(first, last);
 	return {first, cpe};
@@ -115,28 +106,6 @@ auto encode_u8(char32_t CP, OutIt out) -> std::pair<OutIt, bool>
 	return {out + i, !err};
 }
 
-class encoded_cp_u8_or_error {
-	char a[4];
-
-      public:
-	encoded_cp_u8_or_error(char32_t cp = 0)
-	{
-		auto [it, ok] = encode_u8(cp, a);
-		std::fill(it, end(a), '\0');
-		if (!ok)
-			a[0] = 0xFF;
-	}
-
-	auto error() const -> bool { return a[0] & 0xFF == 0xFF; }
-	auto size() const -> size_t
-	{
-		int i = 0;
-		U8_FWD_1(a, i, 4);
-		return i;
-	}
-	operator string_view() const { return {a, size()}; }
-};
-
 /* =========== OPERATION: U8_APPEND_UNSAFE =============== */
 auto encode_valid_cp_u8(char32_t CP, Str& s, Index i) -> Index
 {
@@ -151,25 +120,6 @@ auto encode_valid_cp_u8(char32_t CP, OutIt out) -> OutIt
 	U8_APPEND_UNSAFE(out, i, CP);
 	return out + i;
 }
-
-class encoded_valid_cp_u8 {
-	char a[4];
-
-      public:
-	encoded_valid_cp_u8(char32_t cp = 0)
-	{
-		auto it = encode_valid_cp_u8(cp, a);
-		std::fill(it, end(a), '\0');
-	}
-
-	auto size() const -> size_t
-	{
-		int i = 0;
-		U8_FWD_1_UNSAFE(a, i);
-		return i;
-	}
-	operator string_view() const { return {a, size()}; }
-};
 
 /* =========== USAGE EXAMPLES =============== */
 void u8_next_usage(Str& s)
@@ -200,8 +150,8 @@ void u8_next_usage(Str& s)
 
 	// u8_next_i, index in return value
 	for (size_t i = 0; i != size(s);) {
-		code_point_or_error cpe;
-		std::tie(i, cpe) = u8_next_i(s, i);
+		char32_t cp;
+		std::tie(i, cp) = u8_next_i(s, i);
 		// process cp
 	}
 	for (size_t i = 0; i != size(s);) {
@@ -217,8 +167,8 @@ void u8_next_usage(Str& s)
 		// process cp
 	}
 	for (size_t i = 0, j = 0; i != size(s); i = j) {
-		code_point_or_error cpe;
-		std::tie(j, cpe) = u8_next_i(s, i);
+		char32_t cp;
+		std::tie(j, cp) = u8_next_i(s, i);
 		auto cp_size = j - i;
 		// process cp
 	}
@@ -226,10 +176,12 @@ void u8_next_usage(Str& s)
 
 auto find_cp_faster(const string& s, char32_t cp) -> size_t
 {
-	auto ecp = encoded_cp_u8_or_error(cp);
-	if (ecp.error())
+	char enc_cp[4];
+	auto [it, ok] = encode_u8(cp, enc_cp);
+	if (!ok)
 		return s.npos;
-	return s.find(ecp);
+	auto sv = string_view(enc_cp, it - enc_cp);
+	return s.find(sv);
 }
 
 auto find_cp_slower(const string& s, char32_t cp) -> size_t
@@ -237,9 +189,9 @@ auto find_cp_slower(const string& s, char32_t cp) -> size_t
 	for (size_t i = 0, j = 0; i != size(s); i = j) {
 		auto [jj, dec_cp] = u8_next_i(s, i);
 		j = jj;
-		if (dec_cp.error())
+		if (dec_cp == cp_error)
 			continue;
-		else if (dec_cp.cp() == cp)
+		else if (dec_cp == cp)
 			return i;
 	}
 	return s.npos;
