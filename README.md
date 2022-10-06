@@ -14,19 +14,19 @@ The functions will fall in four categories:
 1. **Functions that decode/encode only one code point.**
    ICU has this functionality in [utf8.h] and [utf16.h].
    but it is implemented as macros that are not type-safe.
-2. **Functions that take the full input and write to fixed-size range.**
-   ICU has lot of such functions. Some examples are in header [ustring.h],
+2. **Functions that take the full input and write to a fixed-size range.**
+   ICU has a lot of such functions. Some examples are in header [ustring.h],
    for example [u_strToUTF8] or [u_strFromUTF8]. If the output  does not fit in
    the given output range they return error and return the size needed for the
    complete output.
-3. **Functions that take the full input and write to resizable range.**
+3. **Functions that take the full input and write to a resizable range.**
    Example in ICU is [icu::UnicodeString::fromUTF8].
 4. **Functions that take input in chunks and write in chunks.**
    They keep a state between calls. Examples are [ucnv_fromUnicode] and
-   [ucnv_toUnicode]. `std::codecvt` is also such API, but it is hard to use.
+   [ucnv_toUnicode]. `std::codecvt` is also such an API, but it is hard to use.
    The problem with `codecvt` comes from the return value `partial`. If that is
    returned, one has to do additional complicated checks to see if the input
-   has incomplete sequence at the end of the chunk or the output chunk has no
+   has an incomplete sequence at the end of the chunk or the output chunk has no
    more space. Additionally, `codevt` may or may not save the few incomplete
    input bytes at the end into the state, the standard makes no guarantees.
    
@@ -51,8 +51,8 @@ This group contains functions that do the following operations:
 - move the index/iterator to the previous code point without decoding it
 - adjust index/iterator to point the start of the code point
 - encode a code point into some range
-- truncate the end of a range (move end iterator) if it contains incomplete
-  sequence of code point (incomplete means the sequence seen so far is valid,
+- truncate the end of a range (move end iterator) if it contains an incomplete
+  sequence of the last code point (incomplete means the sequence seen so far is valid,
   the rest if its bytes maybe are in a different chunk).
   
 See ICU header [utf8.h] for all details.
@@ -64,10 +64,10 @@ flavors as separate operations.
 For each operation there should be at least 2 functions (or function templates).
 
 1. One that takes a string (or more generally, a range) and index and returns
-   new index.
-2. One that takes pair of iterators and returns updated iterator.
+   a new index.
+2. One that takes a pair of iterators and returns an updated iterator.
 
-I will now show few examples how such functions can be defined and implemented
+I will now show a few examples how such functions can be defined and implemented
 using ICU.
 
 ```cpp
@@ -276,22 +276,22 @@ Looking at the above functions, I can ask few questions:
 1. How should the error be reported in `u8_next`? These are the options I have
    considered:
 
-   1. Use `int32_t` as type for code point in `u8_next` and return negative
+   1. Use `int32_t` as a type for code point in `u8_next` and return a negative
       value, exactly the same as ICU.
-   2. Use `char32_t` as type for code point in `u8_next` and return unspecified
+   2. Use `char32_t` as a type for code point in `u8_next` and return unspecified
       high value above the Unicode range, i.e. casting the negative int from ICU
       to the unsigned `char32_t`.
-   3. Use separate variable with its own type (some enum like `std::errc`).
+   3. Use a separate variable with its own type (some enum like `std::errc`).
    4. Abstract the error in lightweight "sum" type `code_point_or_error` that
       resembles `std::expected` or `std::optional` but that can be implemented
       with just a single `char32_t` or with `int32_t`. `std::expected` and
       `std::optional` must use additional bool internally.
-   5. Use single sentinel value for error, signed -1 or unsigned 0xFFFFFFFF.
+   5. Use a single sentinel value for error, signed -1 or unsigned 0xFFFFFFFF.
       I noticed the exact implementation of `U8_NEXT` in ICU and it relies
       on `U8_INTERNAL_NEXT_OR_SUB` and uses exactly -1 to signal error, and not
-      any other negative value. The sentinel can be even special type with
+      any other negative value. The sentinel can be even a special type with an
       overloaded `operator==`.
-   6. Use slightly more type-safe variant of number 5, define an enum as a
+   6. Use a slightly more type-safe variant of number 5, define an enum as a
       strong typedef for `char32_t`.
 
       ```cpp
@@ -303,7 +303,7 @@ Looking at the above functions, I can ask few questions:
    For now I decided for the solution number 5, to use sentinel value. It goes
    with the idea of being low-level and not introducing new types.
 2. Should the size of the encoded sequence of the code point be returned?
-   Probably no. In the examples above I just subtract indexes to get that
+   Probably not. In the examples above I just subtract indexes to get that
    information.
 3. Should we use return values or out-parameters? For the code point and error
    definitely use return value, but for the index or iterator both APIs make
