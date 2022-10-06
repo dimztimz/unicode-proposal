@@ -284,16 +284,24 @@ Looking at the above functions, I can ask few questions:
    3. Use separate variable with its own type (some enum like `std::errc`).
    4. Abstract the error in lightweight "sum" type `code_point_or_error` that
       resembles `std::expected` or `std::optional` but that can be implemented
-      with just a single `char32_t`. `std::expected` and `std::optional` must
-      use additional bool.
+      with just a single `char32_t` or with `int32_t`. `std::expected` and
+      `std::optional` must use additional bool internally.
    5. Use single sentinel value for error, signed -1 or unsigned 0xFFFFFFFF.
-      I noticed the exact implementation of U8_NEXT in ICU and it relies
-      on U8_INTERNAL_NEXT_OR_SUB and uses exactly -1 to signal error, and not
-      any negative value. The sentinel can be even special type with overloaded
-      `operator==`.
+      I noticed the exact implementation of `U8_NEXT` in ICU and it relies
+      on `U8_INTERNAL_NEXT_OR_SUB` and uses exactly -1 to signal error, and not
+      any other negative value. The sentinel can be even special type with
+      overloaded `operator==`.
+   6. Use slightly more type-safe variant of number 5, define an enum as a
+      strong typedef for `char32_t`.
 
-   For now I decided for the last solution to use sentinel value. It goes with
-   the idea of being low-level and not introducing new types.
+      ```cpp
+      enum class code_point_or_error: char32_t {
+        error = char32_t(-1)
+      };
+      ```
+
+   For now I decided for the solution number 5, to use sentinel value. It goes
+   with the idea of being low-level and not introducing new types.
 2. Should the size of the encoded sequence of the code point be returned?
    Probably no. In the examples above I just subtract indexes to get that
    information.
